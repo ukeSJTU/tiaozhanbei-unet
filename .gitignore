@@ -1,0 +1,6 @@
+datasets/
+demo_outputs/
+outputs/
+
+__pycache__/
+.DS_Store
