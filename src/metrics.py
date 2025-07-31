@@ -307,13 +307,18 @@ class CombinedSegmentationLoss(torch.nn.Module):
         
         # Cross entropy loss
         if self.ce_weight > 0:
+            # Ensure class weights are on the same device as pred
+            class_weights = self.class_weights
+            if class_weights is not None:
+                class_weights = class_weights.to(pred.device)
+            
             if self.ignore_index is not None:
                 ce_loss = F.cross_entropy(pred, target, 
-                                        weight=self.class_weights,
+                                        weight=class_weights,
                                         ignore_index=self.ignore_index)
             else:
                 ce_loss = F.cross_entropy(pred, target, 
-                                        weight=self.class_weights)
+                                        weight=class_weights)
             loss += self.ce_weight * ce_loss
         
         # Dice loss
