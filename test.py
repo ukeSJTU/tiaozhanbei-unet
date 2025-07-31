@@ -79,9 +79,17 @@ def evaluate_model(model, dataloader, device, num_classes, save_predictions=Fals
     all_targets = []
     all_image_paths = []
     
-    print("Evaluating model...")
+    print("\n📊 Evaluating model...")
+    print(f"📁 Dataset size: {len(dataloader.dataset)} samples")
+    print(f"🚀 Batch size: {dataloader.batch_size}")
+    print(f"🔍 Classes: {num_classes}")
+    
+    # Create progress bar with detailed metrics
+    progress_bar = tqdm(dataloader, desc='Evaluation', unit='batch', 
+                       ncols=100, colour='green')
+    
     with torch.no_grad():
-        for batch_idx, (images, masks, image_paths) in enumerate(tqdm(dataloader)):
+        for batch_idx, (images, masks, image_paths) in enumerate(progress_bar):
             images = images.to(device)
             masks = masks.to(device)
             
@@ -97,6 +105,14 @@ def evaluate_model(model, dataloader, device, num_classes, save_predictions=Fals
             all_targets.append(masks.cpu())
             all_image_paths.extend(image_paths)
             
+            # Update progress bar with current metrics
+            current_metrics = metrics.compute_all_metrics()
+            progress_bar.set_postfix({
+                'mIoU': f'{current_metrics["mean_iou"]:.3f}',
+                'Acc': f'{current_metrics["pixel_accuracy"]:.3f}',
+                'mDice': f'{current_metrics["mean_dice"]:.3f}'
+            })
+            
             # Save some prediction visualizations
             if save_predictions and batch_idx < 5 and save_dir:
                 save_batch_predictions(
@@ -107,14 +123,19 @@ def evaluate_model(model, dataloader, device, num_classes, save_predictions=Fals
     # Compute final metrics
     computed_metrics = metrics.compute_all_metrics()
     
+    print("\n" + "="*60)
+    print("🏆 EVALUATION COMPLETED")
+    print("="*60)
+    
     # Print detailed metrics
     metrics.print_metrics(class_names)
     
     # Plot confusion matrix
     if save_dir:
+        print("\n📈 Saving visualizations...")
         cm_path = os.path.join(save_dir, 'confusion_matrix.png')
         metrics.plot_confusion_matrix(class_names, save_path=cm_path)
-        print(f"Confusion matrix saved to: {cm_path}")
+        print(f"✅ Confusion matrix saved to: {cm_path}")
     
     return {
         'metrics': computed_metrics,
@@ -202,19 +223,26 @@ def save_results_summary(results, save_path, args):
 def main():
     args = parse_args()
     
+    print("\n" + "="*60)
+    print("🚀 GEAR DATASET EVALUATION")
+    print("="*60)
+    
     # Set device
     if args.device == 'auto':
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     else:
         device = torch.device(args.device)
     
-    print(f"Using device: {device}")
+    print(f"💻 Device: {device}")
+    print(f"📁 Checkpoint: {os.path.basename(args.checkpoint)}")
+    print(f"📂 Dataset: {args.split} split")
     
     # Create save directory
     os.makedirs(args.save_dir, exist_ok=True)
+    print(f"💾 Save directory: {args.save_dir}")
     
     # Create data loader
-    print("Creating data loader...")
+    print("\n🚀 Loading dataset...")
     train_loader, val_loader, test_loader, num_classes = get_gear_dataloaders(
         root_dir=args.data_root,
         batch_size=args.batch_size,
@@ -225,10 +253,10 @@ def main():
     # Select the appropriate dataloader
     if args.split == 'test':
         dataloader = test_loader
-        print(f"Evaluating on test set ({len(test_loader.dataset)} samples)")
+        print(f"🧪 Evaluating on test set ({len(test_loader.dataset)} samples)")
     else:
         dataloader = val_loader
-        print(f"Evaluating on validation set ({len(val_loader.dataset)} samples)")
+        print(f"🔍 Evaluating on validation set ({len(val_loader.dataset)} samples)")
     
     # Debug mode: limit dataset size
     if args.debug:
@@ -260,7 +288,7 @@ def main():
     print(f"Class names: {class_names}")
     
     # Create model
-    print("Creating model...")
+    print("\n🤖 Creating model...")
     if args.model == 'seg_unet':
         model = SegmentationUNet(
             n_channels=3, 
@@ -274,13 +302,13 @@ def main():
     model = model.to(device)
     
     # Load checkpoint
-    print(f"Loading checkpoint from: {args.checkpoint}")
+    print(f"\n💾 Loading checkpoint from: {args.checkpoint}")
     epoch, loss = load_checkpoint(model, None, args.checkpoint, device)
-    print(f"Loaded checkpoint from epoch {epoch} with loss {loss:.4f}")
+    print(f"✅ Loaded checkpoint from epoch {epoch} with loss {loss:.4f}")
     
     # Count parameters
     total_params = sum(p.numel() for p in model.parameters())
-    print(f"Model parameters: {total_params:,}")
+    print(f"🔢 Model parameters: {total_params:,}")
     
     # Evaluate model
     results = evaluate_model(
@@ -294,21 +322,24 @@ def main():
     )
     
     # Save results summary
+    print("\n💾 Saving results...")
     summary_path = os.path.join(args.save_dir, 'evaluation_results.json')
     save_results_summary(results, summary_path, args)
     
     # Print final summary
     metrics = results['metrics']
     print("\n" + "="*60)
-    print("FINAL EVALUATION RESULTS")
+    print("🏆 FINAL EVALUATION RESULTS")
     print("="*60)
-    print(f"Dataset: {args.split}")
-    print(f"Samples evaluated: {len(results['targets'])}")
-    print(f"Pixel Accuracy: {metrics['pixel_accuracy']:.4f}")
-    print(f"Mean IoU: {metrics['mean_iou']:.4f}")
-    print(f"Mean Dice: {metrics['mean_dice']:.4f}")
-    print(f"Mean F1: {metrics['mean_f1']:.4f}")
-    print(f"Results saved to: {args.save_dir}")
+    print(f"📂 Dataset: {args.split}")
+    print(f"📊 Samples evaluated: {len(results['targets']):,}")
+    print(f"🎯 Pixel Accuracy: {metrics['pixel_accuracy']:.4f} ({metrics['pixel_accuracy']*100:.2f}%)")
+    print(f"🔵 Mean IoU: {metrics['mean_iou']:.4f} ({metrics['mean_iou']*100:.2f}%)")
+    print(f"🔴 Mean Dice: {metrics['mean_dice']:.4f} ({metrics['mean_dice']*100:.2f}%)")
+    print(f"🟊 Mean F1: {metrics['mean_f1']:.4f} ({metrics['mean_f1']*100:.2f}%)")
+    print(f"💾 Results saved to: {args.save_dir}")
+    print("="*60)
+    print("🎉 Evaluation completed successfully!")
 
 
 if __name__ == "__main__":

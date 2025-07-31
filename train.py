@@ -15,6 +15,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import Subset
 import numpy as np
+from tqdm import tqdm
 
 from src.gear_dataset import get_gear_dataloaders
 from src.model import SegmentationUNet, UNet
@@ -122,7 +123,11 @@ def train_epoch(model, dataloader, criterion, optimizer, device, epoch, num_clas
     total_loss = 0
     num_batches = len(dataloader)
     
-    for batch_idx, (images, masks, _) in enumerate(dataloader):
+    # Create progress bar for batches
+    progress_bar = tqdm(dataloader, desc=f'Epoch {epoch:3d} [Train]', 
+                       leave=False, unit='batch')
+    
+    for batch_idx, (images, masks, _) in enumerate(progress_bar):
         images = images.to(device)
         masks = masks.to(device)
         
@@ -140,10 +145,12 @@ def train_epoch(model, dataloader, criterion, optimizer, device, epoch, num_clas
         total_loss += loss.item()
         metrics.update(outputs, masks)
         
-        # Print progress
-        if batch_idx % 10 == 0:
-            print(f'Train Epoch: {epoch} [{batch_idx}/{num_batches}] '
-                  f'Loss: {loss.item():.6f}')
+        # Update progress bar
+        avg_loss_so_far = total_loss / (batch_idx + 1)
+        progress_bar.set_postfix({
+            'Loss': f'{loss.item():.4f}',
+            'Avg Loss': f'{avg_loss_so_far:.4f}'
+        })
     
     avg_loss = total_loss / num_batches
     computed_metrics = metrics.compute_all_metrics()
@@ -162,8 +169,12 @@ def validate_epoch(model, dataloader, criterion, device, num_classes):
     total_loss = 0
     num_batches = len(dataloader)
     
+    # Create progress bar for validation
+    progress_bar = tqdm(dataloader, desc='Validating', 
+                       leave=False, unit='batch')
+    
     with torch.no_grad():
-        for images, masks, _ in dataloader:
+        for batch_idx, (images, masks, _) in enumerate(progress_bar):
             images = images.to(device)
             masks = masks.to(device)
             
@@ -174,6 +185,13 @@ def validate_epoch(model, dataloader, criterion, device, num_classes):
             # Update metrics
             total_loss += loss.item()
             metrics.update(outputs, masks)
+            
+            # Update progress bar
+            avg_loss_so_far = total_loss / (batch_idx + 1)
+            progress_bar.set_postfix({
+                'Loss': f'{loss.item():.4f}',
+                'Avg Loss': f'{avg_loss_so_far:.4f}'
+            })
     
     avg_loss = total_loss / num_batches
     computed_metrics = metrics.compute_all_metrics()
@@ -184,17 +202,32 @@ def validate_epoch(model, dataloader, criterion, device, num_classes):
     }
 
 
-def print_epoch_results(epoch, train_results, val_results=None):
+def print_epoch_results(epoch, train_results, val_results=None, epoch_time=None):
     """Print training and validation results"""
-    print(f"\nEpoch {epoch} Results:")
-    print(f"Train Loss: {train_results['loss']:.4f}")
-    print(f"Train mIoU: {train_results['metrics']['mean_iou']:.4f}")
-    print(f"Train mDice: {train_results['metrics']['mean_dice']:.4f}")
+    print(f"\n{'='*60}")
+    print(f"EPOCH {epoch:3d} RESULTS")
+    print(f"{'='*60}")
     
+    # Training results
+    print(f"🚀 TRAINING:")
+    print(f"   Loss:     {train_results['loss']:.4f}")
+    print(f"   mIoU:     {train_results['metrics']['mean_iou']:.4f}")
+    print(f"   mDice:    {train_results['metrics']['mean_dice']:.4f}")
+    print(f"   Accuracy: {train_results['metrics']['pixel_accuracy']:.4f}")
+    
+    # Validation results
     if val_results:
-        print(f"Val Loss: {val_results['loss']:.4f}")
-        print(f"Val mIoU: {val_results['metrics']['mean_iou']:.4f}")
-        print(f"Val mDice: {val_results['metrics']['mean_dice']:.4f}")
+        print(f"\n📊 VALIDATION:")
+        print(f"   Loss:     {val_results['loss']:.4f}")
+        print(f"   mIoU:     {val_results['metrics']['mean_iou']:.4f}")
+        print(f"   mDice:    {val_results['metrics']['mean_dice']:.4f}")
+        print(f"   Accuracy: {val_results['metrics']['pixel_accuracy']:.4f}")
+    
+    # Timing info
+    if epoch_time:
+        print(f"\n⏱️  Epoch Time: {epoch_time:.2f}s")
+    
+    print(f"{'='*60}")
 
 
 def main():
@@ -318,12 +351,21 @@ def main():
         print(f"Resumed from epoch {start_epoch}")
     
     # Training loop
-    print("Starting training...")
+    print("\n🚀 Starting training...")
+    print(f"📊 Total epochs: {args.epochs}")
+    print(f"💾 Checkpoints will be saved every {args.save_freq} epochs")
+    print(f"🔍 Validation will run every {args.val_freq} epochs")
+    print("\n" + "="*60)
+    
     train_losses = []
     val_losses = []
     best_val_miou = 0.0
     
-    for epoch in range(start_epoch, args.epochs):
+    # Create main progress bar for epochs
+    epoch_progress = tqdm(range(start_epoch, args.epochs), desc='Training Progress', 
+                         unit='epoch', position=0)
+    
+    for epoch in epoch_progress:
         epoch_start_time = time.time()
         
         # Train
@@ -342,18 +384,35 @@ def main():
                 best_val_miou = val_miou
                 best_checkpoint_path = os.path.join(output_dirs['checkpoints'], 'best_model.pth')
                 save_checkpoint(model, optimizer, epoch, val_results['loss'], best_checkpoint_path)
-                print(f"New best model saved with mIoU: {best_val_miou:.4f}")
+                tqdm.write(f"🏆 New best model saved with mIoU: {best_val_miou:.4f}")
         
-        # Print results
-        print_epoch_results(epoch, train_results, val_results)
+        epoch_time = time.time() - epoch_start_time
+        
+        # Update main progress bar
+        postfix = {
+            'Train Loss': f'{train_results["loss"]:.4f}',
+            'Train mIoU': f'{train_results["metrics"]["mean_iou"]:.4f}'
+        }
+        if val_results:
+            postfix.update({
+                'Val Loss': f'{val_results["loss"]:.4f}',
+                'Val mIoU': f'{val_results["metrics"]["mean_iou"]:.4f}'
+            })
+        postfix['Time'] = f'{epoch_time:.1f}s'
+        epoch_progress.set_postfix(postfix)
+        
+        # Print detailed results
+        if epoch % args.val_freq == 0 or epoch == args.epochs - 1:
+            tqdm.write("")
+            print_epoch_results(epoch, train_results, val_results, epoch_time)
         
         # Save checkpoint
         if epoch % args.save_freq == 0 or epoch == args.epochs - 1:
             checkpoint_path = os.path.join(output_dirs['checkpoints'], f'checkpoint_epoch_{epoch}.pth')
             save_checkpoint(model, optimizer, epoch, train_results['loss'], checkpoint_path)
-        
-        epoch_time = time.time() - epoch_start_time
-        print(f"Epoch time: {epoch_time:.2f}s")
+    
+    # Close progress bar
+    epoch_progress.close()
     
     # Save final results
     results = {
@@ -370,9 +429,14 @@ def main():
     with open(results_path, 'w') as f:
         json.dump(results, f, indent=2)
     
-    print(f"\nTraining completed!")
-    print(f"Best validation mIoU: {best_val_miou:.4f}")
-    print(f"Results saved to: {experiment_dir}")
+    print(f"\n🎉 Training completed!")
+    print(f"🏆 Best validation mIoU: {best_val_miou:.4f}")
+    print(f"📁 Results saved to: {experiment_dir}")
+    print(f"\n📊 Training Summary:")
+    print(f"   Total epochs trained: {args.epochs}")
+    print(f"   Final train loss: {train_losses[-1]:.4f}")
+    print(f"   Best validation mIoU: {best_val_miou:.4f}")
+    print(f"   Model parameters: {total_params:,}")
 
 
 if __name__ == "__main__":
