@@ -1,4 +1,7 @@
 import os
+import logging
+import sys
+from datetime import datetime
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -212,9 +215,63 @@ def compute_anomaly_score(reconstruction, original, method='mse'):
         raise ValueError(f"Unknown method: {method}")
 
 
+def setup_logging(log_dir, experiment_name, log_level=logging.INFO):
+    """
+    Setup logging to both console and file.
+    
+    Args:
+        log_dir: Directory to save log files
+        experiment_name: Name of the experiment (used in log filename)
+        log_level: Logging level (default: INFO)
+    
+    Returns:
+        logger: Configured logger object
+    """
+    # Create log directory if it doesn't exist
+    os.makedirs(log_dir, exist_ok=True)
+    
+    # Create logger
+    logger = logging.getLogger(experiment_name)
+    logger.setLevel(log_level)
+    
+    # Clear any existing handlers
+    logger.handlers.clear()
+    
+    # Create formatters
+    file_formatter = logging.Formatter(
+        '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    console_formatter = logging.Formatter(
+        '%(asctime)s - %(levelname)s - %(message)s',
+        datefmt='%H:%M:%S'
+    )
+    
+    # File handler
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_filename = f"{experiment_name}_{timestamp}.log"
+    log_filepath = os.path.join(log_dir, log_filename)
+    file_handler = logging.FileHandler(log_filepath)
+    file_handler.setLevel(log_level)
+    file_handler.setFormatter(file_formatter)
+    
+    # Console handler
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setLevel(log_level)
+    console_handler.setFormatter(console_formatter)
+    
+    # Add handlers to logger
+    logger.addHandler(file_handler)
+    logger.addHandler(console_handler)
+    
+    logger.info(f"Logging initialized. Log file: {log_filepath}")
+    
+    return logger
+
+
 def create_output_dirs(base_dir):
     """Create necessary output directories."""
-    dirs = ['checkpoints', 'results', 'visualizations']
+    dirs = ['checkpoints', 'results', 'visualizations', 'logs']
     created_dirs = {}
     
     for dir_name in dirs:

@@ -15,7 +15,7 @@ from PIL import Image
 
 from src.gear_dataset import get_gear_dataloaders
 from src.model import SegmentationUNet, UNet
-from src.utils import load_checkpoint
+from src.utils import load_checkpoint, setup_logging
 
 
 def parse_args():
@@ -67,6 +67,8 @@ def parse_args():
                         help='Figure size for individual visualizations')
     parser.add_argument('--grid_size', type=int, nargs=2, default=[2, 5],
                         help='Grid size for multi-image visualization')
+    parser.add_argument('--always_save', action='store_true', default=True,
+                        help='Always save visualizations (default: True)')
 
     return parser.parse_args()
 
@@ -141,7 +143,7 @@ def visualize_single_prediction(image, gt_mask, pred_mask, pred_logits,
     
     if save_path:
         plt.savefig(save_path, dpi=150, bbox_inches='tight')
-        print(f"Saved visualization to: {save_path}")
+        logger.info(f"Saved visualization to: {save_path}") if 'logger' in globals() else print(f"Saved visualization to: {save_path}")
     
     return fig
 
@@ -195,7 +197,7 @@ def visualize_prediction_grid(images, gt_masks, pred_masks, pred_logits,
     
     if save_path:
         plt.savefig(save_path, dpi=150, bbox_inches='tight')
-        print(f"Saved grid visualization to: {save_path}")
+        logger.info(f"Saved grid visualization to: {save_path}") if 'logger' in globals() else print(f"Saved grid visualization to: {save_path}")
     
     return fig
 
@@ -234,13 +236,16 @@ def main():
     else:
         device = torch.device(args.device)
     
-    print(f"Using device: {device}")
-    
     # Create save directory
     os.makedirs(args.save_dir, exist_ok=True)
     
+    # Setup logging
+    logger = setup_logging(args.save_dir, "visualization")
+    
+    logger.info(f"Using device: {device}")
+    
     # Create data loader
-    print("Creating data loader...")
+    logger.info("Creating data loader...")
     train_loader, val_loader, test_loader, num_classes = get_gear_dataloaders(
         root_dir=args.data_root,
         batch_size=args.batch_size,
@@ -256,7 +261,7 @@ def main():
     else:
         dataloader = train_loader
     
-    print(f"Visualizing {args.split} set ({len(dataloader.dataset)} samples)")
+    logger.info(f"Visualizing {args.split} set ({len(dataloader.dataset)} samples)")
     
     # Get class names from dataset
     dataset = dataloader.dataset
@@ -265,11 +270,11 @@ def main():
     else:
         class_names = ['background', 'pitting', 'spalling', 'scrape'][:num_classes]
     
-    print(f"Number of classes: {num_classes}")
-    print(f"Class names: {class_names}")
+    logger.info(f"Number of classes: {num_classes}")
+    logger.info(f"Class names: {class_names}")
     
     # Create model
-    print("Creating model...")
+    logger.info("Creating model...")
     if args.model == 'seg_unet':
         model = SegmentationUNet(
             n_channels=3, 
@@ -283,9 +288,9 @@ def main():
     model = model.to(device)
     
     # Load checkpoint
-    print(f"Loading checkpoint from: {args.checkpoint}")
+    logger.info(f"Loading checkpoint from: {args.checkpoint}")
     epoch, loss = load_checkpoint(model, None, args.checkpoint, device)
-    print(f"Loaded checkpoint from epoch {epoch} with loss {loss:.4f}")
+    logger.info(f"Loaded checkpoint from epoch {epoch} with loss {loss:.4f}")
     
     # Set model to evaluation mode
     model.eval()
@@ -297,7 +302,7 @@ def main():
     all_pred_logits = []
     all_image_paths = []
     
-    print("Generating predictions...")
+    logger.info("Generating predictions...")
     with torch.no_grad():
         samples_collected = 0
         for images, masks, image_paths in dataloader:
@@ -321,11 +326,11 @@ def main():
                 all_image_paths.append(image_paths[i])
                 samples_collected += 1
     
-    print(f"Collected {len(all_images)} samples for visualization")
+    logger.info(f"Collected {len(all_images)} samples for visualization")
     
-    # Generate individual visualizations
-    if args.save_individual:
-        print("Generating individual visualizations...")
+    # Generate individual visualizations (always save by default)
+    if args.save_individual or args.always_save:
+        logger.info("Generating individual visualizations...")
         for i, (img, gt, pred, logits, path) in enumerate(zip(
             all_images, all_gt_masks, all_pred_masks, all_pred_logits, all_image_paths
         )):
@@ -344,12 +349,12 @@ def main():
             plt.close(fig)
             
             # Print stats
-            print(f"Sample {i+1}: Accuracy={stats['accuracy']:.3f}, "
-                  f"Confidence={stats['confidence_mean']:.3f}±{stats['confidence_std']:.3f}")
+            logger.info(f"Sample {i+1}: Accuracy={stats['accuracy']:.3f}, "
+                       f"Confidence={stats['confidence_mean']:.3f}±{stats['confidence_std']:.3f}")
     
-    # Generate grid visualization
-    if args.save_grid:
-        print("Generating grid visualization...")
+    # Generate grid visualization (always save by default)
+    if args.save_grid or args.always_save:
+        logger.info("Generating grid visualization...")
         grid_save_path = os.path.join(args.save_dir, 'predictions_grid.png')
         fig = visualize_prediction_grid(
             all_images, all_gt_masks, all_pred_masks, all_pred_logits,
@@ -358,7 +363,7 @@ def main():
         plt.close(fig)
     
     # Generate class distribution plot
-    print("Generating class distribution plot...")
+    logger.info("Generating class distribution plot...")
     gt_classes = torch.cat(all_gt_masks).flatten()
     pred_classes = torch.cat(all_pred_masks).flatten()
     
@@ -387,8 +392,8 @@ def main():
     plt.savefig(dist_save_path, dpi=150, bbox_inches='tight')
     plt.close()
     
-    print(f"Class distribution plot saved to: {dist_save_path}")
-    print(f"All visualizations saved to: {args.save_dir}")
+    logger.info(f"Class distribution plot saved to: {dist_save_path}")
+    logger.info(f"All visualizations saved to: {args.save_dir}")
 
 
 if __name__ == "__main__":

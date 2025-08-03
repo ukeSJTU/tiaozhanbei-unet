@@ -20,7 +20,7 @@ from tqdm import tqdm
 from src.gear_dataset import get_gear_dataloaders
 from src.model import SegmentationUNet, UNet
 from src.metrics import SegmentationMetrics, CombinedSegmentationLoss
-from src.utils import create_output_dirs, save_checkpoint, load_checkpoint
+from src.utils import create_output_dirs, save_checkpoint, load_checkpoint, setup_logging
 
 
 def parse_args():
@@ -202,32 +202,34 @@ def validate_epoch(model, dataloader, criterion, device, num_classes):
     }
 
 
-def print_epoch_results(epoch, train_results, val_results=None, epoch_time=None):
+def print_epoch_results(epoch, train_results, val_results=None, epoch_time=None, logger=None):
     """Print training and validation results"""
-    print(f"\n{'='*60}")
-    print(f"EPOCH {epoch:3d} RESULTS")
-    print(f"{'='*60}")
+    log_func = logger.info if logger else print
+    
+    log_func(f"{'='*60}")
+    log_func(f"EPOCH {epoch:3d} RESULTS")
+    log_func(f"{'='*60}")
     
     # Training results
-    print(f"🚀 TRAINING:")
-    print(f"   Loss:     {train_results['loss']:.4f}")
-    print(f"   mIoU:     {train_results['metrics']['mean_iou']:.4f}")
-    print(f"   mDice:    {train_results['metrics']['mean_dice']:.4f}")
-    print(f"   Accuracy: {train_results['metrics']['pixel_accuracy']:.4f}")
+    log_func(f"🚀 TRAINING:")
+    log_func(f"   Loss:     {train_results['loss']:.4f}")
+    log_func(f"   mIoU:     {train_results['metrics']['mean_iou']:.4f}")
+    log_func(f"   mDice:    {train_results['metrics']['mean_dice']:.4f}")
+    log_func(f"   Accuracy: {train_results['metrics']['pixel_accuracy']:.4f}")
     
     # Validation results
     if val_results:
-        print(f"\n📊 VALIDATION:")
-        print(f"   Loss:     {val_results['loss']:.4f}")
-        print(f"   mIoU:     {val_results['metrics']['mean_iou']:.4f}")
-        print(f"   mDice:    {val_results['metrics']['mean_dice']:.4f}")
-        print(f"   Accuracy: {val_results['metrics']['pixel_accuracy']:.4f}")
+        log_func(f"📊 VALIDATION:")
+        log_func(f"   Loss:     {val_results['loss']:.4f}")
+        log_func(f"   mIoU:     {val_results['metrics']['mean_iou']:.4f}")
+        log_func(f"   mDice:    {val_results['metrics']['mean_dice']:.4f}")
+        log_func(f"   Accuracy: {val_results['metrics']['pixel_accuracy']:.4f}")
     
     # Timing info
     if epoch_time:
-        print(f"\n⏱️  Epoch Time: {epoch_time:.2f}s")
+        log_func(f"⏱️  Epoch Time: {epoch_time:.2f}s")
     
-    print(f"{'='*60}")
+    log_func(f"{'='*60}")
 
 
 def main():
@@ -242,28 +244,30 @@ def main():
     else:
         device = torch.device(args.device)
     
-    print(f"Using device: {device}")
-    
-    # Parse class weights
-    class_weights = None
-    if args.class_weights:
-        class_weights = [float(w) for w in args.class_weights.split(',')]
-        print(f"Using class weights: {class_weights}")
-    
     # Create output directories
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     experiment_name = f"gear_seg_{args.model}_{timestamp}"
     experiment_dir = os.path.join(args.save_dir, experiment_name)
     output_dirs = create_output_dirs(experiment_dir)
     
-    print(f"Experiment directory: {experiment_dir}")
+    # Setup logging
+    logger = setup_logging(output_dirs['logs'], experiment_name)
+    
+    logger.info(f"Using device: {device}")
+    logger.info(f"Experiment directory: {experiment_dir}")
+    
+    # Parse class weights
+    class_weights = None
+    if args.class_weights:
+        class_weights = [float(w) for w in args.class_weights.split(',')]
+        logger.info(f"Using class weights: {class_weights}")
     
     # Save arguments
     with open(os.path.join(experiment_dir, 'args.json'), 'w') as f:
         json.dump(vars(args), f, indent=2)
     
     # Create data loaders
-    print("Creating data loaders...")
+    logger.info("Creating data loaders...")
     train_loader, val_loader, test_loader, num_classes = get_gear_dataloaders(
         root_dir=args.data_root,
         batch_size=args.batch_size,
@@ -273,7 +277,7 @@ def main():
 
     # Debug mode: limit dataset size
     if args.debug:
-        print(f"DEBUG MODE: Limiting dataset to {args.debug_samples} samples")
+        logger.info(f"DEBUG MODE: Limiting dataset to {args.debug_samples} samples")
         
         # Limit training data
         train_indices = random.sample(
@@ -303,12 +307,12 @@ def main():
             pin_memory=True
         )
 
-    print(f"Number of classes: {num_classes}")
-    print(f"Train samples: {len(train_loader.dataset)}")
-    print(f"Val samples: {len(val_loader.dataset)}")
+    logger.info(f"Number of classes: {num_classes}")
+    logger.info(f"Train samples: {len(train_loader.dataset)}")
+    logger.info(f"Val samples: {len(val_loader.dataset)}")
     
     # Create model
-    print("Creating model...")
+    logger.info("Creating model...")
     if args.model == 'seg_unet':
         model = SegmentationUNet(
             n_channels=3, 
@@ -324,8 +328,8 @@ def main():
     # Count parameters
     total_params = sum(p.numel() for p in model.parameters())
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    print(f"Total parameters: {total_params:,}")
-    print(f"Trainable parameters: {trainable_params:,}")
+    logger.info(f"Total parameters: {total_params:,}")
+    logger.info(f"Trainable parameters: {trainable_params:,}")
     
     # Create loss function
     criterion = CombinedSegmentationLoss(
@@ -348,14 +352,13 @@ def main():
     if args.resume:
         start_epoch, _ = load_checkpoint(model, optimizer, args.resume, device)
         start_epoch += 1
-        print(f"Resumed from epoch {start_epoch}")
+        logger.info(f"Resumed from epoch {start_epoch}")
     
     # Training loop
-    print("\n🚀 Starting training...")
-    print(f"📊 Total epochs: {args.epochs}")
-    print(f"💾 Checkpoints will be saved every {args.save_freq} epochs")
-    print(f"🔍 Validation will run every {args.val_freq} epochs")
-    print("\n" + "="*60)
+    logger.info("🚀 Starting training...")
+    logger.info(f"📊 Total epochs: {args.epochs}")
+    logger.info(f"💾 Checkpoints will be saved every {args.save_freq} epochs")
+    logger.info(f"🔍 Validation will run every {args.val_freq} epochs")
     
     train_losses = []
     val_losses = []
@@ -384,6 +387,7 @@ def main():
                 best_val_miou = val_miou
                 best_checkpoint_path = os.path.join(output_dirs['checkpoints'], 'best_model.pth')
                 save_checkpoint(model, optimizer, epoch, val_results['loss'], best_checkpoint_path)
+                logger.info(f"🏆 New best model saved with mIoU: {best_val_miou:.4f}")
                 tqdm.write(f"🏆 New best model saved with mIoU: {best_val_miou:.4f}")
         
         epoch_time = time.time() - epoch_start_time
@@ -404,7 +408,7 @@ def main():
         # Print detailed results
         if epoch % args.val_freq == 0 or epoch == args.epochs - 1:
             tqdm.write("")
-            print_epoch_results(epoch, train_results, val_results, epoch_time)
+            print_epoch_results(epoch, train_results, val_results, epoch_time, logger)
         
         # Save checkpoint
         if epoch % args.save_freq == 0 or epoch == args.epochs - 1:
@@ -429,14 +433,14 @@ def main():
     with open(results_path, 'w') as f:
         json.dump(results, f, indent=2)
     
-    print(f"\n🎉 Training completed!")
-    print(f"🏆 Best validation mIoU: {best_val_miou:.4f}")
-    print(f"📁 Results saved to: {experiment_dir}")
-    print(f"\n📊 Training Summary:")
-    print(f"   Total epochs trained: {args.epochs}")
-    print(f"   Final train loss: {train_losses[-1]:.4f}")
-    print(f"   Best validation mIoU: {best_val_miou:.4f}")
-    print(f"   Model parameters: {total_params:,}")
+    logger.info(f"🎉 Training completed!")
+    logger.info(f"🏆 Best validation mIoU: {best_val_miou:.4f}")
+    logger.info(f"📁 Results saved to: {experiment_dir}")
+    logger.info(f"📊 Training Summary:")
+    logger.info(f"   Total epochs trained: {args.epochs}")
+    logger.info(f"   Final train loss: {train_losses[-1]:.4f}")
+    logger.info(f"   Best validation mIoU: {best_val_miou:.4f}")
+    logger.info(f"   Model parameters: {total_params:,}")
 
 
 if __name__ == "__main__":

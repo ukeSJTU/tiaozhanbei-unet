@@ -79,7 +79,7 @@ def evaluate_model(model, dataloader, device, num_classes, save_predictions=Fals
     all_targets = []
     all_image_paths = []
     
-    print("\n📊 Evaluating model...")
+    print("📊 Evaluating model...")
     print(f"📁 Dataset size: {len(dataloader.dataset)} samples")
     print(f"🚀 Batch size: {dataloader.batch_size}")
     print(f"🔍 Classes: {num_classes}")
@@ -123,7 +123,7 @@ def evaluate_model(model, dataloader, device, num_classes, save_predictions=Fals
     # Compute final metrics
     computed_metrics = metrics.compute_all_metrics()
     
-    print("\n" + "="*60)
+    print("="*60)
     print("🏆 EVALUATION COMPLETED")
     print("="*60)
     
@@ -132,7 +132,7 @@ def evaluate_model(model, dataloader, device, num_classes, save_predictions=Fals
     
     # Plot confusion matrix
     if save_dir:
-        print("\n📈 Saving visualizations...")
+        print("📈 Saving visualizations...")
         cm_path = os.path.join(save_dir, 'confusion_matrix.png')
         metrics.plot_confusion_matrix(class_names, save_path=cm_path)
         print(f"✅ Confusion matrix saved to: {cm_path}")
@@ -189,7 +189,7 @@ def save_batch_predictions(images, masks, predictions, image_paths, save_dir,
         plt.close()
 
 
-def save_results_summary(results, save_path, args):
+def save_results_summary(results, save_path, args, logger=None):
     """Save evaluation results summary"""
     metrics = results['metrics']
     
@@ -217,7 +217,10 @@ def save_results_summary(results, save_path, args):
     with open(save_path, 'w') as f:
         json.dump(summary, f, indent=2)
     
-    print(f"Results summary saved to: {save_path}")
+    if logger:
+        logger.info(f"Results summary saved to: {save_path}")
+    else:
+        print(f"Results summary saved to: {save_path}")
 
 
 def main():
@@ -322,24 +325,24 @@ def main():
     )
     
     # Save results summary
-    print("\n💾 Saving results...")
+    logger.info("💾 Saving results...")
     summary_path = os.path.join(args.save_dir, 'evaluation_results.json')
-    save_results_summary(results, summary_path, args)
+    save_results_summary(results, summary_path, args, logger)
     
     # Print final summary
     metrics = results['metrics']
-    print("\n" + "="*60)
-    print("🏆 FINAL EVALUATION RESULTS")
-    print("="*60)
-    print(f"📂 Dataset: {args.split}")
-    print(f"📊 Samples evaluated: {len(results['targets']):,}")
-    print(f"🎯 Pixel Accuracy: {metrics['pixel_accuracy']:.4f} ({metrics['pixel_accuracy']*100:.2f}%)")
-    print(f"🔵 Mean IoU: {metrics['mean_iou']:.4f} ({metrics['mean_iou']*100:.2f}%)")
-    print(f"🔴 Mean Dice: {metrics['mean_dice']:.4f} ({metrics['mean_dice']*100:.2f}%)")
-    print(f"🟊 Mean F1: {metrics['mean_f1']:.4f} ({metrics['mean_f1']*100:.2f}%)")
-    print(f"💾 Results saved to: {args.save_dir}")
-    print("="*60)
-    print("🎉 Evaluation completed successfully!")
+    logger.info("="*60)
+    logger.info("🏆 FINAL EVALUATION RESULTS")
+    logger.info("="*60)
+    logger.info(f"📂 Dataset: {args.split}")
+    logger.info(f"📊 Samples evaluated: {len(results['targets']):,}")
+    logger.info(f"🎯 Pixel Accuracy: {metrics['pixel_accuracy']:.4f} ({metrics['pixel_accuracy']*100:.2f}%)")
+    logger.info(f"🔵 Mean IoU: {metrics['mean_iou']:.4f} ({metrics['mean_iou']*100:.2f}%)")
+    logger.info(f"🔴 Mean Dice: {metrics['mean_dice']:.4f} ({metrics['mean_dice']*100:.2f}%)")
+    logger.info(f"🟊 Mean F1: {metrics['mean_f1']:.4f} ({metrics['mean_f1']*100:.2f}%)")
+    logger.info(f"💾 Results saved to: {args.save_dir}")
+    logger.info("="*60)
+    logger.info("🎉 Evaluation completed successfully!")
 
 
 if __name__ == "__main__":
