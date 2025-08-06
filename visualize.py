@@ -6,12 +6,11 @@ Visualization script for displaying model predictions on Gear dataset.
 import argparse
 import os
 import random
-import torch
-import numpy as np
+
 import matplotlib.pyplot as plt
-from matplotlib.patches import Rectangle
-import seaborn as sns
-from PIL import Image
+import numpy as np
+import torch
+from matplotlib.patches import Patch
 
 from src.gear_dataset import get_gear_dataloaders
 from src.model import SegmentationUNet, UNet
@@ -76,9 +75,11 @@ def parse_args():
 def create_colormap(num_classes):
     """Create a colormap for visualization"""
     if num_classes <= 10:
-        colors = plt.cm.tab10(np.linspace(0, 1, num_classes))
+        cmap = plt.cm.get_cmap('tab10')
+        colors = [cmap(i) for i in range(num_classes)]
     else:
-        colors = plt.cm.tab20(np.linspace(0, 1, num_classes))
+        cmap = plt.cm.get_cmap('tab20')
+        colors = [cmap(i) for i in range(num_classes)]
     return colors
 
 
@@ -98,108 +99,135 @@ def denormalize_image(image_tensor):
     return torch.clamp(image, 0, 1)
 
 
+def create_overlay_mask(mask, num_classes, alpha=0.4):
+    """Create a transparent colored mask overlay"""
+    # Create colormap
+    colors = create_colormap(num_classes)
+    
+    # Convert mask to RGB
+    mask_rgb = np.zeros((*mask.shape, 4))  # RGBA
+    
+    for class_id in range(num_classes):
+        class_mask = mask == class_id
+        if class_id == 0:  # Background - no overlay
+            continue
+        mask_rgb[class_mask] = colors[class_id]
+        mask_rgb[class_mask, 3] = alpha  # Set alpha channel
+    
+    return mask_rgb
+
+
 def visualize_single_prediction(image, gt_mask, pred_mask, pred_logits, 
                                class_names, save_path=None, show_confidence=False):
-    """Visualize a single prediction"""
-    num_plots = 4 if show_confidence else 3
+    """Visualize a single prediction with transparent overlays"""
+    num_plots = 3 if show_confidence else 2
     fig, axes = plt.subplots(1, num_plots, figsize=(5*num_plots, 5))
     
     # Denormalize image
     img_denorm = denormalize_image(image)
     img_np = img_denorm.permute(1, 2, 0).cpu().numpy()
     
-    # Original image
+    # Convert to numpy
+    gt_np = gt_mask.cpu().numpy()
+    pred_np = pred_mask.cpu().numpy()
+    
+    # Create overlay masks
+    gt_overlay = create_overlay_mask(gt_np, len(class_names), alpha=0.4)
+    pred_overlay = create_overlay_mask(pred_np, len(class_names), alpha=0.4)
+    
+    # Ground truth overlay
     axes[0].imshow(img_np)
-    axes[0].set_title('Original Image', fontsize=14)
+    axes[0].imshow(gt_overlay)
+    axes[0].set_title('Original + Ground Truth', fontsize=14)
     axes[0].axis('off')
     
-    # Ground truth mask
-    gt_np = gt_mask.cpu().numpy()
-    im1 = axes[1].imshow(gt_np, cmap='tab10', vmin=0, vmax=len(class_names)-1)
-    axes[1].set_title('Ground Truth', fontsize=14)
+    # Prediction overlay
+    axes[1].imshow(img_np)
+    axes[1].imshow(pred_overlay)
+    axes[1].set_title('Original + Prediction', fontsize=14)
     axes[1].axis('off')
-    
-    # Prediction mask
-    pred_np = pred_mask.cpu().numpy()
-    im2 = axes[2].imshow(pred_np, cmap='tab10', vmin=0, vmax=len(class_names)-1)
-    axes[2].set_title('Prediction', fontsize=14)
-    axes[2].axis('off')
     
     # Confidence map
     if show_confidence:
         # Use max probability across classes as confidence
         confidence = torch.softmax(pred_logits, dim=0).max(dim=0)[0]
-        im3 = axes[3].imshow(confidence.cpu().numpy(), cmap='viridis', vmin=0, vmax=1)
-        axes[3].set_title('Confidence', fontsize=14)
-        axes[3].axis('off')
-        plt.colorbar(im3, ax=axes[3], fraction=0.046, pad=0.04)
+        im3 = axes[2].imshow(confidence.cpu().numpy(), cmap='viridis', vmin=0, vmax=1)
+        axes[2].set_title('Confidence', fontsize=14)
+        axes[2].axis('off')
+        plt.colorbar(im3, ax=axes[2], fraction=0.046, pad=0.04)
     
-    # Add colorbar for masks
-    cbar = plt.colorbar(im2, ax=axes[2], fraction=0.046, pad=0.04)
-    cbar.set_ticks(range(len(class_names)))
-    cbar.set_ticklabels(class_names)
+    # Create a legend for class colors
+    colors = create_colormap(len(class_names))
+    legend_elements = [Patch(facecolor=colors[i], label=class_names[i]) 
+                      for i in range(1, len(class_names))]  # Skip background
+    if legend_elements:
+        fig.legend(handles=legend_elements, loc='upper right', bbox_to_anchor=(0.98, 0.98))
     
     plt.tight_layout()
     
     if save_path:
         plt.savefig(save_path, dpi=150, bbox_inches='tight')
-        logger.info(f"Saved visualization to: {save_path}") if 'logger' in globals() else print(f"Saved visualization to: {save_path}")
+        print(f"Saved visualization to: {save_path}")
     
     return fig
 
 
 def visualize_prediction_grid(images, gt_masks, pred_masks, pred_logits, 
                              class_names, grid_size, save_path=None):
-    """Visualize multiple predictions in a grid"""
+    """Visualize multiple predictions in individual files with transparent overlays"""
     rows, cols = grid_size
-    fig, axes = plt.subplots(rows, cols * 3, figsize=(cols * 15, rows * 5))
     
-    if rows == 1:
-        axes = axes.reshape(1, -1)
-    
+    # Generate individual visualizations for each sample
     for i in range(min(rows * cols, len(images))):
-        row = i // cols
-        col = i % cols
+        # Create individual figure for each sample  
+        fig, axes = plt.subplots(1, 2, figsize=(12, 6))
         
         # Denormalize image
         img_denorm = denormalize_image(images[i])
         img_np = img_denorm.permute(1, 2, 0).cpu().numpy()
         
-        # Original image
-        axes[row, col*3].imshow(img_np)
-        axes[row, col*3].set_title(f'Sample {i+1}: Original', fontsize=12)
-        axes[row, col*3].axis('off')
-        
-        # Ground truth
+        # Convert to numpy
         gt_np = gt_masks[i].cpu().numpy()
-        axes[row, col*3+1].imshow(gt_np, cmap='tab10', vmin=0, vmax=len(class_names)-1)
-        axes[row, col*3+1].set_title(f'Sample {i+1}: Ground Truth', fontsize=12)
-        axes[row, col*3+1].axis('off')
-        
-        # Prediction
         pred_np = pred_masks[i].cpu().numpy()
-        im = axes[row, col*3+2].imshow(pred_np, cmap='tab10', vmin=0, vmax=len(class_names)-1)
-        axes[row, col*3+2].set_title(f'Sample {i+1}: Prediction', fontsize=12)
-        axes[row, col*3+2].axis('off')
+        
+        # Create overlay masks
+        gt_overlay = create_overlay_mask(gt_np, len(class_names), alpha=0.4)
+        pred_overlay = create_overlay_mask(pred_np, len(class_names), alpha=0.4)
+        
+        # Ground truth overlay
+        axes[0].imshow(img_np)
+        axes[0].imshow(gt_overlay)
+        axes[0].set_title(f'Sample {i+1}: Original + Ground Truth', fontsize=14)
+        axes[0].axis('off')
+        
+        # Prediction overlay
+        axes[1].imshow(img_np)
+        axes[1].imshow(pred_overlay)
+        axes[1].set_title(f'Sample {i+1}: Original + Prediction', fontsize=14)
+        axes[1].axis('off')
+        
+        # Create a legend for class colors
+        colors = create_colormap(len(class_names))
+        legend_elements = [Patch(facecolor=colors[j], label=class_names[j]) 
+                          for j in range(1, len(class_names))]  # Skip background
+        if legend_elements:
+            fig.legend(handles=legend_elements, loc='upper right', bbox_to_anchor=(0.98, 0.98))
+        
+        plt.tight_layout()
+        
+        # Save individual sample if requested
+        if save_path:
+            sample_path = save_path.replace('.png', f'_sample_{i+1}.png')
+            plt.savefig(sample_path, dpi=150, bbox_inches='tight')
+            print(f"Saved sample {i+1} visualization to: {sample_path}")
+        
+        plt.close(fig)
     
-    # Hide unused subplots
-    for i in range(rows * cols, rows * cols):
-        for j in range(3):
-            if i < len(axes) and j*3+2 < len(axes[i//cols]):
-                axes[i//cols, (i%cols)*3+j].axis('off')
-    
-    # Add a single colorbar
-    cbar = fig.colorbar(im, ax=axes, fraction=0.046, pad=0.04)
-    cbar.set_ticks(range(len(class_names)))
-    cbar.set_ticklabels(class_names)
-    
-    plt.tight_layout()
-    
+    # Create a single composite figure
     if save_path:
-        plt.savefig(save_path, dpi=150, bbox_inches='tight')
-        logger.info(f"Saved grid visualization to: {save_path}") if 'logger' in globals() else print(f"Saved grid visualization to: {save_path}")
+        print(f"Saved {min(rows * cols, len(images))} individual sample visualizations")
     
-    return fig
+    return None  # Return None since we're saving individual files
 
 
 def compute_prediction_stats(pred_logits, gt_mask, class_names):
@@ -261,13 +289,13 @@ def main():
     else:
         dataloader = train_loader
     
-    logger.info(f"Visualizing {args.split} set ({len(dataloader.dataset)} samples)")
+    logger.info(f"Visualizing {args.split} set")
     
     # Get class names from dataset
     dataset = dataloader.dataset
-    if hasattr(dataset, 'class_names'):
+    try:
         class_names = ['background'] + list(dataset.class_names)
-    else:
+    except AttributeError:
         class_names = ['background', 'pitting', 'spalling', 'scrape'][:num_classes]
     
     logger.info(f"Number of classes: {num_classes}")
