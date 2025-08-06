@@ -52,8 +52,8 @@ def parse_args():
                         help='Random seed for sample selection')
     
     # Output settings
-    parser.add_argument('--save_dir', type=str, default='visualizations',
-                        help='Directory to save visualizations')
+    parser.add_argument('--save_dir', type=str, default=None,
+                        help='Directory to save visualizations (auto-determined from checkpoint if not provided)')
     parser.add_argument('--save_individual', action='store_true',
                         help='Save individual prediction images')
     parser.add_argument('--save_grid', action='store_true',
@@ -119,9 +119,8 @@ def create_overlay_mask(mask, num_classes, alpha=0.4):
 
 def visualize_single_prediction(image, gt_mask, pred_mask, pred_logits, 
                                class_names, save_path=None, show_confidence=False):
-    """Visualize a single prediction with transparent overlays"""
-    num_plots = 3 if show_confidence else 2
-    fig, axes = plt.subplots(1, num_plots, figsize=(5*num_plots, 5))
+    """Visualize a single prediction with transparent overlays and confidence scores"""
+    fig, axes = plt.subplots(1, 2, figsize=(12, 6))
     
     # Denormalize image
     img_denorm = denormalize_image(image)
@@ -130,6 +129,10 @@ def visualize_single_prediction(image, gt_mask, pred_mask, pred_logits,
     # Convert to numpy
     gt_np = gt_mask.cpu().numpy()
     pred_np = pred_mask.cpu().numpy()
+    
+    # Calculate confidence score
+    pred_probs = torch.softmax(pred_logits, dim=0)
+    confidence_score = pred_probs.max(dim=0)[0].mean().item()
     
     # Create overlay masks
     gt_overlay = create_overlay_mask(gt_np, len(class_names), alpha=0.4)
@@ -141,20 +144,11 @@ def visualize_single_prediction(image, gt_mask, pred_mask, pred_logits,
     axes[0].set_title('Original + Ground Truth', fontsize=14)
     axes[0].axis('off')
     
-    # Prediction overlay
+    # Prediction overlay with confidence score
     axes[1].imshow(img_np)
     axes[1].imshow(pred_overlay)
-    axes[1].set_title('Original + Prediction', fontsize=14)
+    axes[1].set_title(f'Original + Prediction\nConfidence: {confidence_score:.3f}', fontsize=14)
     axes[1].axis('off')
-    
-    # Confidence map
-    if show_confidence:
-        # Use max probability across classes as confidence
-        confidence = torch.softmax(pred_logits, dim=0).max(dim=0)[0]
-        im3 = axes[2].imshow(confidence.cpu().numpy(), cmap='viridis', vmin=0, vmax=1)
-        axes[2].set_title('Confidence', fontsize=14)
-        axes[2].axis('off')
-        plt.colorbar(im3, ax=axes[2], fraction=0.046, pad=0.04)
     
     # Create a legend for class colors
     colors = create_colormap(len(class_names))
@@ -174,13 +168,20 @@ def visualize_single_prediction(image, gt_mask, pred_mask, pred_logits,
 
 def visualize_prediction_grid(images, gt_masks, pred_masks, pred_logits, 
                              class_names, grid_size, save_path=None):
-    """Visualize multiple predictions in individual files with transparent overlays"""
+    """Visualize multiple predictions in a grid layout with confidence scores"""
     rows, cols = grid_size
+    num_samples = min(rows * cols, len(images))
     
-    # Generate individual visualizations for each sample
-    for i in range(min(rows * cols, len(images))):
-        # Create individual figure for each sample  
-        fig, axes = plt.subplots(1, 2, figsize=(12, 6))
+    # Create a large grid figure with 2 columns per sample (GT and Pred)
+    fig, axes = plt.subplots(rows, cols * 2, figsize=(cols * 8, rows * 4))
+    
+    # Handle single row case
+    if rows == 1:
+        axes = axes.reshape(1, -1)
+    
+    for i in range(num_samples):
+        row = i // cols
+        col = i % cols
         
         # Denormalize image
         img_denorm = denormalize_image(images[i])
@@ -190,44 +191,49 @@ def visualize_prediction_grid(images, gt_masks, pred_masks, pred_logits,
         gt_np = gt_masks[i].cpu().numpy()
         pred_np = pred_masks[i].cpu().numpy()
         
+        # Calculate confidence score
+        pred_probs = torch.softmax(pred_logits[i], dim=0)
+        confidence_score = pred_probs.max(dim=0)[0].mean().item()
+        
         # Create overlay masks
         gt_overlay = create_overlay_mask(gt_np, len(class_names), alpha=0.4)
         pred_overlay = create_overlay_mask(pred_np, len(class_names), alpha=0.4)
         
-        # Ground truth overlay
-        axes[0].imshow(img_np)
-        axes[0].imshow(gt_overlay)
-        axes[0].set_title(f'Sample {i+1}: Original + Ground Truth', fontsize=14)
-        axes[0].axis('off')
+        # Ground truth overlay (left column)
+        gt_ax = axes[row, col * 2]
+        gt_ax.imshow(img_np)
+        gt_ax.imshow(gt_overlay)
+        gt_ax.set_title(f'Sample {i+1}: Ground Truth', fontsize=10)
+        gt_ax.axis('off')
         
-        # Prediction overlay
-        axes[1].imshow(img_np)
-        axes[1].imshow(pred_overlay)
-        axes[1].set_title(f'Sample {i+1}: Original + Prediction', fontsize=14)
-        axes[1].axis('off')
-        
-        # Create a legend for class colors
-        colors = create_colormap(len(class_names))
-        legend_elements = [Patch(facecolor=colors[j], label=class_names[j]) 
-                          for j in range(1, len(class_names))]  # Skip background
-        if legend_elements:
-            fig.legend(handles=legend_elements, loc='upper right', bbox_to_anchor=(0.98, 0.98))
-        
-        plt.tight_layout()
-        
-        # Save individual sample if requested
-        if save_path:
-            sample_path = save_path.replace('.png', f'_sample_{i+1}.png')
-            plt.savefig(sample_path, dpi=150, bbox_inches='tight')
-            print(f"Saved sample {i+1} visualization to: {sample_path}")
-        
-        plt.close(fig)
+        # Prediction overlay with confidence (right column)
+        pred_ax = axes[row, col * 2 + 1]
+        pred_ax.imshow(img_np)
+        pred_ax.imshow(pred_overlay)
+        pred_ax.set_title(f'Sample {i+1}: Prediction\nConf: {confidence_score:.3f}', fontsize=10)
+        pred_ax.axis('off')
     
-    # Create a single composite figure
+    # Hide unused subplots
+    for i in range(num_samples, rows * cols):
+        row = i // cols
+        col = i % cols
+        axes[row, col * 2].axis('off')
+        axes[row, col * 2 + 1].axis('off')
+    
+    # Create a single legend for the entire figure
+    colors = create_colormap(len(class_names))
+    legend_elements = [Patch(facecolor=colors[j], label=class_names[j]) 
+                      for j in range(1, len(class_names))]  # Skip background
+    if legend_elements:
+        fig.legend(handles=legend_elements, loc='upper right', bbox_to_anchor=(0.98, 0.98))
+    
+    plt.tight_layout()
+    
     if save_path:
-        print(f"Saved {min(rows * cols, len(images))} individual sample visualizations")
+        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        print(f"Saved grid visualization to: {save_path}")
     
-    return None  # Return None since we're saving individual files
+    return fig
 
 
 def compute_prediction_stats(pred_logits, gt_mask, class_names):
@@ -263,6 +269,18 @@ def main():
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     else:
         device = torch.device(args.device)
+    
+    # Auto-determine save directory from checkpoint path if not provided
+    if args.save_dir is None:
+        # Extract model directory from checkpoint path
+        checkpoint_dir = os.path.dirname(args.checkpoint)
+        # Look for outputs/<model_name> pattern
+        if 'outputs' in checkpoint_dir:
+            model_dir = checkpoint_dir
+        else:
+            # Fallback: use directory containing the checkpoint
+            model_dir = checkpoint_dir
+        args.save_dir = os.path.join(model_dir, 'visualizations')
     
     # Create save directory
     os.makedirs(args.save_dir, exist_ok=True)
